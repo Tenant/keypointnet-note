@@ -219,12 +219,12 @@ def estimate_rotation(xyz0, xyz1, pconf, noise):
   xyz0 += tf.random_normal(tf.shape(xyz0), mean=0, stddev=noise)
   xyz1 += tf.random_normal(tf.shape(xyz1), mean=0, stddev=noise)
 
-  pconf2 = tf.expand_dims(pconf, 2)
-  cen0 = tf.reduce_sum(xyz0 * pconf2, 1, keepdims=True)
-  cen1 = tf.reduce_sum(xyz1 * pconf2, 1, keepdims=True)
+  pconf2 = tf.expand_dims(pconf, 2) # shape: [None, 10, 1]
+  cen0 = tf.reduce_sum(xyz0 * pconf2, 1, keepdims=True) # shape: [None, 1, 3]
+  cen1 = tf.reduce_sum(xyz1 * pconf2, 1, keepdims=True) # shape: [None, 1, 3]
 
-  x = xyz0 - cen0
-  y = xyz1 - cen1
+  x = xyz0 - cen0 # shape: [None, 10, 3]
+  y = xyz1 - cen1 # shape: [None, 10, 3]
 
   cov = tf.matmul(tf.matmul(x, tf.matrix_diag(pconf), transpose_a=True), y)
   _, u, v = tf.svd(cov, full_matrices=True)
@@ -314,19 +314,19 @@ def variance_loss(probmap, ranx, rany, uv):
     The variance loss.
   """
 
-  ran = tf.stack([ranx, rany], axis=2)
+  ran = tf.stack([ranx, rany], axis=2) # shape: [128, 128, 2]
 
   sh = tf.shape(ran)
   # [batch, num_kp, vh, vw, 2]
-  ran = tf.reshape(ran, [1, 1, sh[0], sh[1], 2])
+  ran = tf.reshape(ran, [1, 1, sh[0], sh[1], 2]) # shape: [1, 1, 128, 128, 2]
 
   sh = tf.shape(uv)
-  uv = tf.reshape(uv, [sh[0], sh[1], 1, 1, 2])
+  uv = tf.reshape(uv, [sh[0], sh[1], 1, 1, 2]) # shape: [None, 10, 1, 1, 2]
 
-  diff = tf.reduce_sum(tf.square(uv - ran), axis=4)
-  diff *= probmap
+  diff = tf.reduce_sum(tf.square(uv - ran), axis=4) # shape: [None, 10, 128, 128, 2] -> [None, 10, 128, 128]
+  diff *= probmap # shape: [None, 10, 128, 128]
 
-  return tf.reduce_mean(tf.reduce_sum(diff, axis=[2, 3]))
+  return tf.reduce_mean(tf.reduce_sum(diff, axis=[2, 3])) # shape: [None]
 
 
 def dilated_cnn(images, num_filters, is_training):
@@ -341,7 +341,7 @@ def dilated_cnn(images, num_filters, is_training):
     Output of this dilated CNN.
   """
 
-  net = images
+  net = images # shape: [None, 128, 128, 3]
 
   with slim.arg_scope(
       [slim.conv2d, slim.fully_connected],
@@ -367,22 +367,22 @@ def orientation_network(images, num_filters, is_training):
   """
 
   with tf.variable_scope("OrientationNetwork"):
-    net = dilated_cnn(images, num_filters, is_training)
+    net = dilated_cnn(images, num_filters, is_training) # shape: [None, 128, 128, 32]
 
     modules = 2
-    prob = slim.conv2d(net, 2, [3, 3], rate=1, activation_fn=None)
-    prob = tf.transpose(prob, [0, 3, 1, 2])
+    prob = slim.conv2d(net, 2, [3, 3], rate=1, activation_fn=None) # shape: [None, 128, 128, 2]
+    prob = tf.transpose(prob, [0, 3, 1, 2]) # shape: [None, 2, 128, 128]
 
-    prob = tf.reshape(prob, [-1, modules, vh * vw])
-    prob = tf.nn.softmax(prob)
+    prob = tf.reshape(prob, [-1, modules, vh * vw]) # shape: [None, 2, 128 * 128]
+    prob = tf.nn.softmax(prob) # element-wise operation
     ranx, rany = meshgrid(vh)
 
-    prob = tf.reshape(prob, [-1, 2, vh, vw])
+    prob = tf.reshape(prob, [-1, 2, vh, vw]) # shape: [None, 2, 128, 128]
 
-    sx = tf.reduce_sum(prob * ranx, axis=[2, 3])
+    sx = tf.reduce_sum(prob * ranx, axis=[2, 3]) # shape: [None, 2]
     sy = tf.reduce_sum(prob * rany, axis=[2, 3])  # -> batch x modules
 
-    out_xy = tf.reshape(tf.stack([sx, sy], -1), [-1, modules, 2])
+    out_xy = tf.reshape(tf.stack([sx, sy], -1), [-1, modules, 2]) # shape: [None, 2, 2]
 
   return out_xy
 
@@ -417,61 +417,61 @@ def keypoint_network(rgba,
 
   """
 
-  images = rgba[:, :, :, :3]
+  images = rgba[:, :, :, :3] # shape: [None, 128, 128, 4] -> [None, 128, 128, 3]
 
   # [batch, 1]
-  orient = orientation_network(images, num_filters * 0.5, is_training)
+  orient = orientation_network(images, num_filters * 0.5, is_training) # shape: [None, 2, 2]
 
   # [batch, 1]
-  lr_estimated = tf.maximum(0.0, tf.sign(orient[:, 0, :1] - orient[:, 1, :1]))
+  lr_estimated = tf.maximum(0.0, tf.sign(orient[:, 0, :1] - orient[:, 1, :1])) # shape: [None, 1] this line returns either 0 or 1
 
   if lr_gt is None:
     lr = lr_estimated
   else:
-    lr_gt = tf.maximum(0.0, tf.sign(lr_gt[:, :1]))
-    lr = tf.round(lr_gt * anneal + lr_estimated * (1 - anneal))
+    lr_gt = tf.maximum(0.0, tf.sign(lr_gt[:, :1])) # shape: [None, 1] this line returns either 0 or 1
+    lr = tf.round(lr_gt * anneal + lr_estimated * (1 - anneal)) # fuse `lr_gt` and `lr_estimated` based on `anneal`
 
   lrtiled = tf.tile(
       tf.expand_dims(tf.expand_dims(lr, 1), 1),
-      [1, images.shape[1], images.shape[2], 1])
+      [1, images.shape[1], images.shape[2], 1]) # shape: [None, 1] -> [None, 1, 1] -> [None, 1, 1, 1] -> [None, 128, 128, 1]
 
-  images = tf.concat([images, lrtiled], axis=3)
+  images = tf.concat([images, lrtiled], axis=3) # shape: [None, 128, 128, 4]
 
-  mask = rgba[:, :, :, 3]
+  mask = rgba[:, :, :, 3] # shape: [None, 128, 128]
   mask = tf.cast(tf.greater(mask, tf.zeros_like(mask)), dtype=tf.float32)
 
-  net = dilated_cnn(images, num_filters, is_training)
+  net = dilated_cnn(images, num_filters, is_training) # shape: [None, 128, 128, 64]
 
   # The probability distribution map.
   prob = slim.conv2d(
-      net, num_kp, [3, 3], rate=1, scope="conv_xy", activation_fn=None)
+      net, num_kp, [3, 3], rate=1, scope="conv_xy", activation_fn=None) # shape: [None, 128, 128, 10]
 
   # We added the  fixed camera distance as a bias.
   z = -30 + slim.conv2d(
-      net, num_kp, [3, 3], rate=1, scope="conv_z", activation_fn=None)
+      net, num_kp, [3, 3], rate=1, scope="conv_z", activation_fn=None) # shape: [None, 128, 128, 10]
 
-  prob = tf.transpose(prob, [0, 3, 1, 2])
-  z = tf.transpose(z, [0, 3, 1, 2])
+  prob = tf.transpose(prob, [0, 3, 1, 2]) # shape: [None, 10, 128, 128]
+  z = tf.transpose(z, [0, 3, 1, 2]) # shape: [None, 10, 128, 128]
 
-  prob = tf.reshape(prob, [-1, num_kp, vh * vw])
+  prob = tf.reshape(prob, [-1, num_kp, vh * vw]) # shape: [None, 10, 128 * 128]
   prob = tf.nn.softmax(prob, name="softmax")
 
   ranx, rany = meshgrid(vh)
-  prob = tf.reshape(prob, [-1, num_kp, vh, vw])
+  prob = tf.reshape(prob, [-1, num_kp, vh, vw]) # shape: [None, 10, 128, 128]
 
   # These are for visualizing the distribution maps.
-  prob_viz = tf.expand_dims(tf.reduce_sum(prob, 1), 3)
-  prob_vizs = [tf.expand_dims(prob[:, i, :, :], 3) for i in range(num_kp)]
+  prob_viz = tf.expand_dims(tf.reduce_sum(prob, 1), 3) # shape: [None, 10, 128, 128] -> [None, 128, 128] -> [None, 128, 128, 1]
+  prob_vizs = [tf.expand_dims(prob[:, i, :, :], 3) for i in range(num_kp)] # list, 10 elments, each element is in the shape [None, 128, 128, 1]
 
-  sx = tf.reduce_sum(prob * ranx, axis=[2, 3])
+  sx = tf.reduce_sum(prob * ranx, axis=[2, 3])  # shape: [None, 10]
   sy = tf.reduce_sum(prob * rany, axis=[2, 3])  # -> batch x num_kp
 
   # [batch, num_kp]
-  sill = tf.reduce_sum(prob * tf.expand_dims(mask, 1), axis=[2, 3])
-  sill = tf.reduce_mean(-tf.log(sill + 1e-12))
+  sill = tf.reduce_sum(prob * tf.expand_dims(mask, 1), axis=[2, 3]) # shape: [None, 10]
+  sill = tf.reduce_mean(-tf.log(sill + 1e-12)) # shape: [None]
 
-  z = tf.reduce_sum(prob * z, axis=[2, 3])
-  uv = tf.reshape(tf.stack([sx, sy], -1), [-1, num_kp, 2])
+  z = tf.reduce_sum(prob * z, axis=[2, 3]) # shape: [None, 10]
+  uv = tf.reshape(tf.stack([sx, sy], -1), [-1, num_kp, 2]) # shape: [None, 10, 2]
 
   variance = variance_loss(prob, ranx, rany, uv)
 
@@ -521,31 +521,32 @@ def model_fn(features, labels, mode, hparams):
       # x-positive/negative axes (dominant direction).
       xp_axis = tf.tile(
           tf.constant([[[1.0, 0, 0, 1], [-1.0, 0, 0, 1]]]),
-          [tf.shape(orient)[0], 1, 1])
+          [tf.shape(orient)[0], 1, 1]) # shape: [None, 2, 4]
 
       # [batch, 2, 4]  = [batch, 2, 4] x [batch, 4, 4]
       xp = tf.matmul(xp_axis, mv[i])
 
       # [batch, 2, 3]
-      xp = t.project(xp)
+      xp = t.project(xp) # shape: [None, 2, 3]
 
-      loss_lr += tf.losses.mean_squared_error(orient[:, :, :2], xp[:, :, :2])
-      loss_variance += variance
-      loss_sill += sill
+      loss_lr += tf.losses.mean_squared_error(orient[:, :, :2], xp[:, :, :2]) # shape: [None]
+      loss_variance += variance # shape: [None]
+      loss_sill += sill # shape: [None]
 
-      uv = tf.reshape(uv, [-1, hparams.num_kp, 2])
-      z = tf.reshape(z, [-1, hparams.num_kp, 1])
+      uv = tf.reshape(uv, [-1, hparams.num_kp, 2]) # shape: [None, 10, 2]
+      z = tf.reshape(z, [-1, hparams.num_kp, 1]) # shape: [None, 10, 1]
 
       # [batch, num_kp, 3]
       uvz[i] = tf.concat([uv, z], axis=2)
 
+      # [batch, 10, 4]  = [batch, 10, 4] x [batch, 4, 4]
       world_coords = tf.matmul(t.unproject(uvz[i]), mvi[i])
 
       # [batch, num_kp, 3]
       uvz_proj[i] = t.project(tf.matmul(world_coords, mv[1 - i]))
 
   pconf = tf.ones(
-      [tf.shape(uv)[0], tf.shape(uv)[1]], dtype=tf.float32) / hparams.num_kp
+      [tf.shape(uv)[0], tf.shape(uv)[1]], dtype=tf.float32) / hparams.num_kp # shape: [None, 10]
 
   for i in range(2):
     loss_con += consistency_loss(uvz_proj[i][:, :, :2], uvz[1 - i][:, :, :2],
